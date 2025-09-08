@@ -9,7 +9,22 @@ const express=require('express')
 const app=express()
 const path=require('path')
 const cors=require('cors')
-app.use(cors())
+const allowedOrigins = [
+  "http://localhost:3000",
+  "https://excel-system-frond-end.vercel.app"
+];
+
+app.use(cors({
+  origin: function(origin, callback) {
+    // Allow requests with no origin (like Postman or server-to-server)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error("Not allowed by CORS"));
+    }
+  }
+}));
 const fs=require('fs')
 const xlsx=require('xlsx')
 
