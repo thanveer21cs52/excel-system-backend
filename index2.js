@@ -92,17 +92,25 @@ async function inserttable(tablename, filepath) {
   const rows = await readXlsxFile(filepath);
   const headers = rows[0];
 
-  // Exclude id column (Postgres will auto-generate it)
+  // ✅ exclude "id" column if it exists in table (we let Postgres auto-generate it)
   const columnList = headers.join(", ");
 
   for (const row of rows.slice(1)) {
-    await client`
-      INSERT INTO ${client.unsafe(tablename)} (${client.unsafe(columnList)})
-      VALUES (${row})
-      ON CONFLICT DO NOTHING
-    `;
+    // ✅ Ensure row length matches headers
+    const safeRow = headers.map((_, i) => row[i] ?? null);
+
+    try {
+      await client`
+        INSERT INTO ${client.unsafe(tablename)} (${client.unsafe(columnList)})
+        VALUES (${safeRow})
+        ON CONFLICT DO NOTHING
+      `;
+    } catch (err) {
+      console.error(`❌ Failed to insert row:`, safeRow, err.message);
+    }
   }
 }
+
 
 // ---------- ROUTES ----------
 app.post('/upload', upload.single('excel'), async (req, res) => {
