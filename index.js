@@ -14,17 +14,32 @@ const allowedOrigins = [
   "https://excel-system-frond-end.vercel.app"
 ];
 
+import express from "express";
+import cors from "cors";
+
+
+
+
+const allowedOrigins = [
+  "http://localhost:3000",  // dev environment
+  "https://excel-system-frond-end.vercel.app" // production frontend
+];
+
 app.use(cors({
-  origin: function(origin, callback) {
-    // Allow requests with no origin (like Postman or server-to-server)
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin)) {
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
       callback(new Error("Not allowed by CORS"));
     }
-  }
+  },
+  methods: ["GET", "POST", "PUT", "DELETE"],
+  credentials: true
 }));
+
+
+
+
 const fs=require('fs')
 const xlsx=require('xlsx')
 
