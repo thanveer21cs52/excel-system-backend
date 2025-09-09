@@ -66,12 +66,13 @@ async function read(tablename, filepath) {
   
   const columns = headers.map((col, index) => {
     const value = firstDataRow[index];
+    console.log(typeof value)
     if(index==0){
-       if (typeof value === "number ") {
+       if (typeof value === "number") {
       if (Number.isInteger(value)) {
         if (value >= -2147483648 && value <= 2147483647) {
-          return `"${col}" INT UNIQUE`;
-        } else {
+         
+       
           return `"${col}" BIGINT UNIQUE`;
         }
       } else {
