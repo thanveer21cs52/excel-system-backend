@@ -9,13 +9,9 @@ const express=require('express')
 const app=express()
 const path=require('path')
 const cors=require('cors')
-const allowedOrigins = [
-  "http://localhost:3000",
-  "https://excel-system-frond-end.vercel.app"
-];
 
-import express from "express";
-import cors from "cors";
+
+
 
 
 
