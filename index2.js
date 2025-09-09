@@ -90,14 +90,24 @@ async function read(tablename, filepath) {
 // ---------- INSERT DATA FUNCTION ----------
 async function inserttable(tablename, filepath) {
   const rows = await readXlsxFile(filepath);
-  const headers = rows[0];
+  if (!rows.length) {
+    console.warn("⚠️ No rows found in Excel file:", filepath);
+    return;
+  }
 
-  // ✅ exclude "id" column if it exists in table (we let Postgres auto-generate it)
+  const headers = rows[0].map(h => h.trim()); // ✅ Clean header names
   const columnList = headers.join(", ");
 
-  for (const row of rows.slice(1)) {
-    // ✅ Ensure row length matches headers
-    const safeRow = headers.map((_, i) => row[i] ?? null);
+  console.log(`📥 Inserting into table "${tablename}" with columns:`, headers);
+
+  for (const [index, row] of rows.slice(1).entries()) {
+    // ✅ Make sure row length = headers length
+    const safeRow = headers.map((_, i) => {
+      const value = row[i];
+      if (value === undefined || value === null || value === "") return null;
+      if (value instanceof Date) return value.toISOString(); // ✅ Store date in ISO format
+      return value;
+    });
 
     try {
       await client`
@@ -106,10 +116,13 @@ async function inserttable(tablename, filepath) {
         ON CONFLICT DO NOTHING
       `;
     } catch (err) {
-      console.error(`❌ Failed to insert row:`, safeRow, err.message);
+      console.error(`❌ Failed to insert row #${index + 1}:`, safeRow, err.message);
     }
   }
+
+  console.log(`✅ Finished inserting ${rows.length - 1} rows into "${tablename}"`);
 }
+
 
 
 // ---------- ROUTES ----------
