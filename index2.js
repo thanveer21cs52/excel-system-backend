@@ -9,7 +9,33 @@ const express=require('express')
 const app=express()
 const path=require('path')
 const cors=require('cors')
-app.use(cors())
+
+
+
+
+
+
+
+const allowedOrigins = [
+  "http://localhost:3000",  // dev environment
+  "https://excel-system-frond-end.vercel.app" // production frontend
+];
+
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error("Not allowed by CORS"));
+    }
+  },
+  methods: ["GET", "POST", "PUT", "DELETE"],
+  credentials: true
+}));
+
+
+
+
 const fs=require('fs')
 const xlsx=require('xlsx')
 
@@ -37,63 +63,50 @@ const fileFilter = (req, file, cb) => {
 const upload = multer({ storage: storage,fileFilter });
 async function read(tablename, filepath) {
   const rows = await readXlsxFile(filepath);
-  if (!rows.length) throw new Error("Empty Excel file");
+  const headers = rows[0];
+  const firstDataRow = rows[1];
 
-  
-  const safeTableName = tablename.replace(/[^a-zA-Z0-9_]/g, "_");
+  // Build column definitions (skip id, we add manually)
+  const columns = headers.map((col, index) => {
+    const value = firstDataRow[index];
 
-
-  const data = rows[0].map((col, index) => {
-    const safeCol = `"${col.replace(/\s+/g, "_")}"`; // replace spaces with underscore + quote it
-    const value = rows[1][index];
-
-    if (index === 0) {
-      return `${safeCol} TEXT PRIMARY KEY`; // always text PK to avoid int/uuid issues
-    }
-    if (typeof value === "string") return `${safeCol} TEXT`;
     if (typeof value === "number") {
-      return Number.isInteger(value)
-        ? value >= -2147483648 && value <= 2147483647
-          ? `${safeCol} INT`
-          : `${safeCol} BIGINT`
-        : `${safeCol} FLOAT`;
+      if (Number.isInteger(value)) {
+        if (value >= -2147483648 && value <= 2147483647) {
+          return `${col} INT`;
+        } else {
+          return `${col} BIGINT`;
+        }
+      } else {
+        return `${col} FLOAT`;
+      }
+    } else {
+      return `${col} TEXT`;
     }
-    if (value instanceof Date) return `${safeCol} TIMESTAMP`;
-    return `${safeCol} TEXT`;
-  }).join(", ");
+  });
 
-   client.unsafe(
-    `CREATE TABLE IF NOT EXISTS ${safeTableName} (${data})`
-  );
+  // ✅ Add id column as primary key
+  const schema = ["id BIGSERIAL PRIMARY KEY", ...columns].join(", ");
 
-  return safeTableName;
+  await client`
+    CREATE TABLE IF NOT EXISTS ${client.unsafe(tablename)} (
+      ${client.unsafe(schema)}
+    )
+  `;
 }
 
 async function inserttable(tablename, filepath) {
   const rows = await readXlsxFile(filepath);
-  const headers = rows[0].map((col) => `"${col.replace(/\s+/g, "_")}"`).join(", ");
+  const headers = rows[0];
 
-  const data = rows.slice(1).map((cols) => {
-    return `(${cols
-      .map((col) => {
-        if (typeof col === "string")
-          return `'${col.replace(/'/g, "''")}'`; // escape single quotes
-        if (col instanceof Date)
-          return `'${col.toISOString()}'`;
-        return col ?? "NULL";
-      })
-      .join(",")})`;
-  });
-
-  if (!data.length) return;
-
-  const joinedValues = data.join(",");
-
-   client.unsafe(`
-    INSERT INTO ${tablename} (${headers})
-    VALUES ${joinedValues}
-    ON CONFLICT (${headers.split(",")[0]}) DO NOTHING
-  `);
+  // Insert each row safely
+  for (const row of rows.slice(1)) {
+    await client`
+      INSERT INTO ${client.unsafe(tablename)} (${client.unsafe(headers.join(','))})
+      VALUES (${row})
+      ON CONFLICT DO NOTHING
+    `;
+  }
 }
 
 app.post('/upload', upload.single('excel'), async (req, res) => {
@@ -107,7 +120,6 @@ inserttable(tablename,filepath)
 
   }
   catch(err){
-    console.log(err)
     res.send({message:'failed'});
 
   }
@@ -141,9 +153,17 @@ app.get('/tabledata/:tablename/:page',async (req,res)=>{
  console.log(tablename)
 
   try {
+    const header1=await client`
+      select * from ${client.unsafe(tablename)} limit 1
+     
+    `;
+  const idname= Object.keys(header1[0])[0]
+  
+
     const result = await client`
       SELECT *
       FROM ${client.unsafe(tablename)}
+      order by ${client.unsafe(idname)} asc
       limit 10
       offset ${client.unsafe(page*10)}
      
@@ -158,7 +178,8 @@ app.get('/tabledata/:tablename/:page',async (req,res)=>{
     res.send({
       message:'success',
       data: result,
-      length:length
+      length:length,
+      idname
     
     });
   } catch (err) {
@@ -188,11 +209,41 @@ app.delete('/delete/:tablename',async (req,res)=>{
   }
 
 })
+
+app.use(express.json()); 
+
+
+app.put('/update/:tablename/:idname/:id', async (req, res) => {
+  const { tablename, idname, id } = req.params;
+  const data = await req.body;
+  console.log("Updating Table:", tablename, "ID:", id, "Data:", data);
+
+  try {
+    
+    const setString = Object.entries(data)
+      .map(([key, value]) => `${key} = '${value}'`)
+      .join(", ");
+      console.log(setString)
+
+    await client`
+      UPDATE ${client.unsafe(tablename)}
+      SET ${client.unsafe(setString)}
+      WHERE ${client.unsafe(idname)} = ${id}
+    `;
+
+    res.send({ message: 'success' });
+  } catch (err) {
+    console.error("Update Error:", err);
+    res.send({ message: 'failed' });
+  }
+});
+
 app.get('/download/:tablename',async (req,res)=>{
  const {tablename}= req.params
  console.log(tablename)
 
-  try {
+  try {  
+    
      const data=await client`
       select * from ${client.unsafe(tablename)}
      
