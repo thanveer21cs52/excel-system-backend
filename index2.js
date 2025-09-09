@@ -12,8 +12,8 @@ const fs = require('fs');
 const xlsx = require('xlsx');
 
 const allowedOrigins = [
-  "http://localhost:3000",  // dev environment
-  "https://excel-system-frond-end.vercel.app" // production frontend
+  "http://localhost:3000", 
+  "https://excel-system-frond-end.vercel.app"
 ];
 
 app.use(cors({
@@ -28,7 +28,6 @@ app.use(cors({
   credentials: true
 }));
 
-// ---------- MULTER UPLOAD CONFIG ----------
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
     cb(null, 'uploads/');
@@ -52,42 +51,73 @@ const fileFilter = (req, file, cb) => {
 };
 const upload = multer({ storage: storage, fileFilter });
 
-// ---------- CREATE TABLE FUNCTION ----------
 async function read(tablename, filepath) {
   const rows = await readXlsxFile(filepath);
-  const headers = rows[0];
-  const firstDataRow = rows[1] || []; // fallback if empty file
+  if (!rows.length) {
+    console.warn("⚠️ No rows in file:", filepath);
+    return;
+  }
 
-  // Build columns dynamically based on first row's data type
+  const headers = rows[0].map(h =>
+    h.trim().replace(/\s+/g, "_").replace(/[^a-zA-Z0-9_]/g, "")
+  );
+  const firstDataRow = rows[1] || [];
+
+  
   const columns = headers.map((col, index) => {
     const value = firstDataRow[index];
+    if(index==0){
+       if (typeof value === "number ") {
+      if (Number.isInteger(value)) {
+        if (value >= -2147483648 && value <= 2147483647) {
+          return `"${col}" INT UNIQUE`;
+        } else {
+          return `"${col}" BIGINT UNIQUE`;
+        }
+      } else {
+        return `"${col}" FLOAT UNIQUE`;
+      }
+    } else {
+      return `"${col}" TEXT UNIQUE`;
+    }
+
+    }
 
     if (typeof value === "number") {
       if (Number.isInteger(value)) {
         if (value >= -2147483648 && value <= 2147483647) {
-          return `${col} INT`;
+          return `"${col}" INT`;
         } else {
-          return `${col} BIGINT`;
+          return `"${col}" BIGINT`;
         }
       } else {
-        return `${col} FLOAT`;
+        return `"${col}" FLOAT`;
       }
     } else {
-      return `${col} TEXT`;
+      return `"${col}" TEXT`;
     }
   });
 
-  // Add auto-increment primary key
-  const schema = ["id BIGSERIAL PRIMARY KEY", ...columns].join(", ");
 
-  await client`
-    CREATE TABLE IF NOT EXISTS ${client.unsafe(tablename)} (
-      ${client.unsafe(schema)}
-    )
-  `;
+  const schema = [`"uniqid" UUID PRIMARY KEY DEFAULT gen_random_uuid()`, ...columns].join(", ");
+
+
+
+  try {
+    await client`
+      CREATE TABLE IF NOT EXISTS ${client.unsafe(tablename)} (
+        ${client.unsafe(schema)}
+      )
+    `;
+  } catch (err) {
+
+    console.error("Error:", err.message);
+    throw err;
+  }
 }
 
-// ---------- INSERT DATA FUNCTION ----------
+
+
 async function inserttable(tablename, filepath) {
   const rows = await readXlsxFile(filepath);
   if (!rows.length) {
@@ -95,28 +125,33 @@ async function inserttable(tablename, filepath) {
     return;
   }
 
-  const headers = rows[0].map(h => h.trim()); // ✅ Clean header names
+  const headers = rows[0].map(h => h.trim());
   const columnList = headers.join(", ");
 
   console.log(`📥 Inserting into table "${tablename}" with columns:`, headers);
 
   for (const [index, row] of rows.slice(1).entries()) {
-    // ✅ Make sure row length = headers length
     const safeRow = headers.map((_, i) => {
       const value = row[i];
       if (value === undefined || value === null || value === "") return null;
-      if (value instanceof Date) return value.toISOString(); // ✅ Store date in ISO format
+      if (value instanceof Date) return value.toISOString();
       return value;
     });
 
+    const placeholders = headers.map((_, i) => `$${i + 1}`).join(", ");
+
     try {
-      await client`
-        INSERT INTO ${client.unsafe(tablename)} (${client.unsafe(columnList)})
-        VALUES (${safeRow})
-        ON CONFLICT DO NOTHING
-      `;
+   await client.query(
+  `INSERT INTO ${tablename} (${columnList})
+   VALUES (${placeholders})
+   ON CONFLICT (${headers[0]}) 
+   DO UPDATE SET ${headers.slice(1).map((col, i) => `"${col}" = EXCLUDED."${col}"`).join(", ")}`,
+  safeRow
+);
+
     } catch (err) {
-      console.error(`❌ Failed to insert row #${index + 1}:`, safeRow, err.message);
+      console.error(`❌ Failed to insert row ${index + 1}:`, safeRow);
+      console.error("Error:", err.message);
     }
   }
 
@@ -125,7 +160,10 @@ async function inserttable(tablename, filepath) {
 
 
 
-// ---------- ROUTES ----------
+
+
+
+
 app.post('/upload', upload.single('excel'), async (req, res) => {
   const filepath = `./uploads/${req.file.filename}`;
   const tablename = req.file.originalname.split('.')[0];
@@ -161,10 +199,11 @@ app.get('/tabledata/:tablename/:page', async (req, res) => {
       SELECT * FROM ${client.unsafe(tablename)} LIMIT 1
     `;
     const idname = Object.keys(header1[0])[0];
+    const ascid=Object.keys(header1[0])[1];
 
     const result = await client`
       SELECT * FROM ${client.unsafe(tablename)}
-      ORDER BY ${client.unsafe(idname)} ASC
+      ORDER BY ${client.unsafe(ascid)} ASC
       LIMIT 10 OFFSET ${client.unsafe(page * 10)}
     `;
     const length = await client`
